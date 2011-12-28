@@ -17,9 +17,9 @@ enum FSURLOperationState {
 @interface FSURLOperation ()
 
 @property (readwrite, assign) enum FSURLOperationState state;
-@property (readwrite, retain) NSURLConnection* connection;
-@property (readwrite, retain) NSSet* runLoopModes;
-@property (readwrite, retain) NSMutableData* dataAccumulator;
+@property (strong) NSURLConnection* connection;
+@property (strong) NSSet* runLoopModes;
+@property (strong) NSMutableData* dataAccumulator;
 
 + (NSThread*)networkRequestThread;
 - (void)finish;
@@ -32,13 +32,13 @@ enum FSURLOperationState {
 @synthesize response;
 @synthesize payload;
 @synthesize error;
+@synthesize targetThread;
+@synthesize onFinish;
 
 @synthesize state;
 @synthesize connection;
 @synthesize runLoopModes;
 @synthesize dataAccumulator;
-@synthesize targetThread;
-@synthesize onFinish;
 
 + (FSURLOperation*)URLOperationWithRequest:(NSURLRequest*)req
                            completionBlock:(void(^)(NSHTTPURLResponse* resp, NSData* payload, NSError* error))completion
@@ -100,7 +100,8 @@ enum FSURLOperationState {
 {
     [self willChangeValueForKey:@"isFinished"];
     self.state = finished;
-    self.onFinish(self.response, self.payload, self.error);
+    if (self.onFinish) self.onFinish(self.response, self.payload, self.error);
+    // TODO: Delegate-based callbacks
     [self didChangeValueForKey:@"isFinished"];
 }
 
@@ -119,16 +120,6 @@ enum FSURLOperationState {
     }
     
     [self.connection start];
-}
-
-- (void)startOnThread:(NSThread*)thread
-{
-    if (![self isReady])
-        return;
-    
-    self.state = executing;
-    
-    [self performSelector:@selector(operationDidStart) onThread:thread withObject:nil waitUntilDone:YES modes:[self.runLoopModes allObjects]];
 }
 
 #pragma mark NSOperation

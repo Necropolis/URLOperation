@@ -16,6 +16,7 @@
 @property (strong) NSError * error;
 @property (strong) NSThread* targetThread; // changing this after the request has started produces undefined behavior.
 @property (copy) void(^onFinish)(NSHTTPURLResponse* resp, NSData* payload, NSError* error);
+// todo: delegate based callbacks
 
 + (FSURLOperation*)URLOperationWithRequest:(NSURLRequest*)req
                            completionBlock:(void(^)(NSHTTPURLResponse* resp, NSData* payload, NSError* error))completion;
@@ -24,6 +25,5 @@
                                   onThread:(NSThread*)thread;
 
 - (id)initWithRequest:(NSURLRequest*)_request;
-- (void)startOnThread:(NSThread*)thread; // completely ignore targetThread and just run this on whatever the heck thread I say, dangit!
 
 @end
