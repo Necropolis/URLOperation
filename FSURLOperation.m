@@ -104,14 +104,14 @@ enum FSURLOperationState {
     self.state = finished;
     if (self.onFinish) self.onFinish(self.response, self.payload, self.error);
     if (self.delegate&&self.callback) {
-        NSInvocation* inv = [[NSInvocation alloc] init];
-        [inv setTarget:self.delegate];
+        NSInvocation* inv = [NSInvocation invocationWithMethodSignature:[self.delegate methodSignatureForSelector:self.callback]];
+        
         [inv setSelector:self.callback];
         [inv setArgument:(__bridge void*)self.response atIndex:2];
         [inv setArgument:(__bridge void*)self.payload atIndex:3];
         [inv setArgument:(__bridge void*)self.error atIndex:4];
         
-        [inv invoke];
+        [inv invokeWithTarget:self.delegate];
     }
     [self didChangeValueForKey:@"isFinished"];
 }
