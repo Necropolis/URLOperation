@@ -16,7 +16,8 @@
 @property (strong) NSError * error;
 @property (strong) NSThread* targetThread; // changing this after the request has started produces undefined behavior.
 @property (copy) void(^onFinish)(NSHTTPURLResponse* resp, NSData* payload, NSError* error);
-// todo: delegate based callbacks
+@property (weak) id delegate;
+@property (assign) SEL callback;
 
 + (FSURLOperation*)URLOperationWithRequest:(NSURLRequest*)req
                            completionBlock:(void(^)(NSHTTPURLResponse* resp, NSData* payload, NSError* error))completion;

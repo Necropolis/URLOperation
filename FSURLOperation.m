@@ -34,6 +34,8 @@ enum FSURLOperationState {
 @synthesize error;
 @synthesize targetThread;
 @synthesize onFinish;
+@synthesize delegate;
+@synthesize callback;
 
 @synthesize state;
 @synthesize connection;
@@ -101,7 +103,16 @@ enum FSURLOperationState {
     [self willChangeValueForKey:@"isFinished"];
     self.state = finished;
     if (self.onFinish) self.onFinish(self.response, self.payload, self.error);
-    // TODO: Delegate-based callbacks
+    if (self.delegate&&self.callback) {
+        NSInvocation* inv = [[NSInvocation alloc] init];
+        [inv setTarget:self.delegate];
+        [inv setSelector:self.callback];
+        [inv setArgument:(__bridge void*)self.response atIndex:2];
+        [inv setArgument:(__bridge void*)self.payload atIndex:3];
+        [inv setArgument:(__bridge void*)self.error atIndex:4];
+        
+        [inv invoke];
+    }
     [self didChangeValueForKey:@"isFinished"];
 }
 
