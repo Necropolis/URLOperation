@@ -63,6 +63,18 @@ enum FSURLOperationState {
     return operation;
 }
 
+#ifdef FSURLDEBUG
++ (NSMutableSet *)debugCallbacks
+{
+    static NSMutableSet * _debugCallbacks;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        _debugCallbacks = [[NSMutableSet alloc] init];
+    });
+    return _debugCallbacks;
+}
+#endif
+
 + (void)networkRequestThreadEntryPoint:(id)__unused object
 {
     do {
@@ -100,6 +112,9 @@ enum FSURLOperationState {
 {
     [self willChangeValueForKey:@"isFinished"];
     self.state = finished;
+#ifdef FSURLDEBUG
+    for (FSURLDebugBlockCallback callback in [[self class] debugCallbacks]) callback(self.request, RequestFinished, self.response, self.payload, self.error);
+#endif
     if (self.onFinish) self.onFinish(self.response, self.payload, self.error);
     // TODO: Delegate-based callbacks
     [self didChangeValueForKey:@"isFinished"];
@@ -130,6 +145,10 @@ enum FSURLOperationState {
         return;
     
     self.state = executing;
+    
+#ifdef FSURLDEBUG
+    for (FSURLDebugBlockCallback callback in [[self class] debugCallbacks]) callback(self.request, RequestBegan, nil, nil, nil);
+#endif
     
     [self performSelector:@selector(operationDidStart) onThread:self.targetThread withObject:nil waitUntilDone:YES modes:[self.runLoopModes allObjects]];
 }
