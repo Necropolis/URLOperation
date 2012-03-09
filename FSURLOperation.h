@@ -8,6 +8,14 @@
 
 #import <Foundation/Foundation.h>
 
+#ifdef FSURLDEBUG
+enum FSURLDebugStatus {
+    RequestBegan,
+    RequestFinished
+} FSURLDebugStatus;
+typedef void(^FSURLDebugBlockCallback)(NSURLRequest *, enum FSURLDebugStatus, NSHTTPURLResponse *, NSData *, NSError *);
+#endif
+
 @interface FSURLOperation : NSOperation
 
 @property (strong) NSURLRequest* request; // changing this after the request has started produces undefined behavior.
@@ -18,6 +26,10 @@
 @property (copy) void(^onFinish)(NSHTTPURLResponse* resp, NSData* payload, NSError* error);
 @property (weak) id delegate;
 @property (assign) SEL callback;
+
+#ifdef FSURLDEBUG
++ (NSMutableSet *)debugCallbacks; // use to get callbacks to all operations going in and out
+#endif
 
 + (FSURLOperation*)URLOperationWithRequest:(NSURLRequest*)req
                            completionBlock:(void(^)(NSHTTPURLResponse* resp, NSData* payload, NSError* error))completion;
