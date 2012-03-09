@@ -14,6 +14,15 @@ enum FSURLOperationState {
     finished
     } FSURLOperationState;
 
+NSString * kThreadDataExecutingRequests = @"numberOfExecutingRequests";
+NSString * kThreadDataAssignedRequests = @"numberOfAssignedRequets";
+
+#ifndef FSURLMAXTHREADS
+NSUInteger FSURLMaximumWorkThreads = 16;
+#else
+NSUInteger FSURLMaximumWorkThreads = FSURLMAXTHREADS;
+#endif
+
 @interface FSURLOperation ()
 
 @property (readwrite, assign) enum FSURLOperationState state;
@@ -21,10 +30,21 @@ enum FSURLOperationState {
 @property (strong) NSSet* runLoopModes;
 @property (strong) NSMutableData* dataAccumulator;
 
+
 + (NSThread*)networkRequestThread;
++ (NSMutableArray *)networkRequestThreads;
++ (NSThread *)unusedNetworkRequestThread;
 - (void)finish;
 
 @end
+
+NSNumber * FSURLOperation__getAssignedRequestsOnThreadAsNumber(NSThread *);
+NSUInteger FSURLOperation__getAssignedRequestsOnThread(NSThread *);
+void FSURLOperation__setAssignedRequestsOnThread(NSThread *, NSUInteger);
+
+NSNumber * FSURLOperation__getRequestsRunningOnThreadAsNumber(NSThread *);
+NSUInteger FSURLOperation__getRequestsRunningOnThread(NSThread *);
+void FSURLOperation__setRequestsRunningOnThread(NSThread *, NSUInteger);
 
 @implementation FSURLOperation
 
@@ -45,7 +65,7 @@ enum FSURLOperationState {
 {
     FSURLOperation* operation = [[self alloc] initWithRequest:req];
     operation.onFinish = completion;
-    operation.targetThread = [self networkRequestThread];
+    operation.targetThread = nil;
     return operation;
 }
 
@@ -58,7 +78,7 @@ enum FSURLOperationState {
     if (thread)
         operation.targetThread = thread;
     else
-        operation.targetThread = [self networkRequestThread];
+        operation.targetThread = nil;
     
     return operation;
 }
@@ -98,6 +118,69 @@ enum FSURLOperationState {
     return networkReqThread;
 }
 
++ (dispatch_queue_t)networkRequestThreadsMutatorLock
+{
+    static dispatch_queue_t lock;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        lock = dispatch_queue_create("FSURLOperation Network Worker Thread Pool", DISPATCH_QUEUE_SERIAL);
+    });
+    return lock;
+}
+
++ (NSMutableArray *)networkRequestThreads
+{
+    static NSMutableArray * networkRequestThreads;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        networkRequestThreads = [[NSMutableArray alloc] initWithCapacity:FSURLMaximumWorkThreads];
+    });
+    return networkRequestThreads;
+}
+
++ (NSThread *)unusedNetworkRequestThread
+{
+    __block NSThread * result;
+    dispatch_sync([self networkRequestThreadsMutatorLock], ^{
+        NSComparator orderByExecutingRequests = ^NSComparisonResult(id obj1, id obj2) {
+            NSAssert([obj1 isKindOfClass:[NSThread class]], @"Dude, this really should be a thread");
+            NSAssert([obj2 isKindOfClass:[NSThread class]], @"Dude, this really should be a thread");
+            return [FSURLOperation__getRequestsRunningOnThreadAsNumber(obj1) compare:FSURLOperation__getRequestsRunningOnThreadAsNumber(obj2)];
+        };
+        NSComparator orderByAssignedRequests = ^NSComparisonResult(id obj1, id obj2) {
+            NSAssert([obj1 isKindOfClass:[NSThread class]], @"Dude, this really should be a thread");
+            NSAssert([obj2 isKindOfClass:[NSThread class]], @"Dude, this really should be a thread");
+            return [FSURLOperation__getAssignedRequestsOnThreadAsNumber(obj1) compare:FSURLOperation__getAssignedRequestsOnThreadAsNumber(obj2)];
+        };
+        NSComparator orderByExecutingThenAssignedRequests = ^NSComparisonResult(id obj1, id obj2) {
+            NSComparisonResult result = orderByExecutingRequests(obj1, obj2);
+            if (result == NSOrderedSame) result = orderByAssignedRequests(obj1, obj2);
+            return result;
+        };
+        
+        NSMutableArray * networkRequestThreads = [self networkRequestThreads];
+        [networkRequestThreads sortUsingComparator:orderByExecutingThenAssignedRequests];
+        if ([networkRequestThreads count]==0||(FSURLOperation__getRequestsRunningOnThread([networkRequestThreads objectAtIndex:0])>0&&[networkRequestThreads count]<FSURLMaximumWorkThreads)) {
+            NSThread * newThread = [[NSThread alloc] initWithTarget:self selector:@selector(networkRequestThreadEntryPoint:) object:nil];
+            [newThread setName:[NSString stringWithFormat:@"net.fsdev.FSURLOperation-Work-Thread.%02lu", [networkRequestThreads count]]];
+            [newThread start];
+            [networkRequestThreads insertObject:newThread atIndex:0];
+        }
+        
+        NSMutableString * output = [[NSMutableString alloc] init];
+        [output appendString:@"FSURLOperation Threads:\n"];
+        
+        for (NSThread * t in networkRequestThreads) {
+            [output appendFormat:@"  %@: Assigned: %02lu Executing: %02lu\n", [t name], FSURLOperation__getAssignedRequestsOnThread(t), FSURLOperation__getRequestsRunningOnThread(t)];
+        }
+        [output appendString:@"\n\n\n"];
+        printf("%s", [output UTF8String]);
+
+        result = [networkRequestThreads objectAtIndex:0];
+    });
+    return result;
+}
+
 - (id)initWithRequest:(NSURLRequest *)_request
 {
     self = [super init];
@@ -116,6 +199,9 @@ enum FSURLOperationState {
     for (FSURLDebugBlockCallback callback in [[self class] debugCallbacks]) callback(self.request, RequestFinished, self.response, self.payload, self.error);
 #endif
     if (self.onFinish) self.onFinish(self.response, self.payload, self.error);
+    dispatch_sync([[self class] networkRequestThreadsMutatorLock], ^{
+        FSURLOperation__setRequestsRunningOnThread(self.targetThread, FSURLOperation__getRequestsRunningOnThread(self.targetThread)-1);
+    });
     // TODO: Delegate-based callbacks
     [self didChangeValueForKey:@"isFinished"];
 }
@@ -126,6 +212,11 @@ enum FSURLOperationState {
         [self finish];
         return;
     }
+    
+    dispatch_sync([[self class] networkRequestThreadsMutatorLock], ^{
+        FSURLOperation__setAssignedRequestsOnThread(self.targetThread, FSURLOperation__getAssignedRequestsOnThread(self.targetThread)-1);
+        FSURLOperation__setRequestsRunningOnThread(self.targetThread, FSURLOperation__getRequestsRunningOnThread(self.targetThread)+1);
+    });
     
     self.connection = [[NSURLConnection alloc] initWithRequest:self.request delegate:self startImmediately:NO];
     
@@ -149,6 +240,13 @@ enum FSURLOperationState {
 #ifdef FSURLDEBUG
     for (FSURLDebugBlockCallback callback in [[self class] debugCallbacks]) callback(self.request, RequestBegan, nil, nil, nil);
 #endif
+    
+    NSThread * freeThread = [[self class] unusedNetworkRequestThread];
+    NSAssert(freeThread != nil, @"Thread is nil when it shouldn't have been.");
+    self.targetThread = freeThread;
+    dispatch_sync([[self class] networkRequestThreadsMutatorLock], ^{
+        FSURLOperation__setAssignedRequestsOnThread(self.targetThread, FSURLOperation__getAssignedRequestsOnThread(self.targetThread)+1);
+    });
     
     [self performSelector:@selector(operationDidStart) onThread:self.targetThread withObject:nil waitUntilDone:YES modes:[self.runLoopModes allObjects]];
 }
@@ -214,3 +312,39 @@ didReceiveResponse:(NSURLResponse *)resp
 }
 
 @end
+
+NSNumber * FSURLOperation__getAssignedRequestsOnThreadAsNumber(NSThread * thread)
+{
+    NSNumber * n = [[thread threadDictionary] objectForKey:kThreadDataAssignedRequests];
+    if (n==nil) {
+        n = [NSNumber numberWithUnsignedInteger:0];
+        [[thread threadDictionary] setObject:n forKey:kThreadDataAssignedRequests];
+    }
+    return n;
+}
+NSUInteger FSURLOperation__getAssignedRequestsOnThread(NSThread * thread)
+{
+    return [FSURLOperation__getAssignedRequestsOnThreadAsNumber(thread) unsignedIntegerValue];
+}
+void FSURLOperation__setAssignedRequestsOnThread(NSThread * thread, NSUInteger number)
+{
+    [[thread threadDictionary] setObject:[NSNumber numberWithUnsignedInteger:number] forKey:kThreadDataAssignedRequests];
+}
+
+NSNumber * FSURLOperation__getRequestsRunningOnThreadAsNumber(NSThread * thread)
+{
+    NSNumber * n = [[thread threadDictionary] objectForKey:kThreadDataExecutingRequests];
+    if (n==nil) { 
+        n = [NSNumber numberWithUnsignedInteger:0];
+        [[thread threadDictionary] setObject:n forKey:kThreadDataExecutingRequests];
+    }
+    return n;
+}
+NSUInteger FSURLOperation__getRequestsRunningOnThread(NSThread * thread)
+{
+    return [FSURLOperation__getRequestsRunningOnThreadAsNumber(thread) unsignedIntegerValue];
+}
+void FSURLOperation__setRequestsRunningOnThread(NSThread * thread, NSUInteger number)
+{
+    [[thread threadDictionary] setObject:[NSNumber numberWithUnsignedInteger:number] forKey:kThreadDataExecutingRequests];
+}

@@ -16,6 +16,8 @@ enum FSURLDebugStatus {
 typedef void(^FSURLDebugBlockCallback)(NSURLRequest *, enum FSURLDebugStatus, NSHTTPURLResponse *, NSData *, NSError *);
 #endif
 
+extern NSUInteger FSURLMaximumWorkThreads;
+
 @interface FSURLOperation : NSOperation
 
 @property (strong) NSURLRequest* request; // changing this after the request has started produces undefined behavior.
