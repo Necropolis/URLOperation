@@ -65,17 +65,25 @@ enum FSURLOperationState {
     return operation;
 }
 
-#ifdef FSURLDEBUG
-+ (NSMutableSet *)debugCallbacks
++ (NSMutableSet *)globalBlockCallbacks_requestStarted
 {
-    static NSMutableSet * _debugCallbacks;
+    static NSMutableSet * callbacks;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        _debugCallbacks = [[NSMutableSet alloc] init];
+        callbacks = [[NSMutableSet alloc] init];
     });
-    return _debugCallbacks;
+    return callbacks;
 }
-#endif
+
++ (NSMutableSet *)globalBlockCallbacks_requestFinished
+{
+    static NSMutableSet * callbacks;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        callbacks = [[NSMutableSet alloc] init];
+    });
+    return callbacks;
+}
 
 + (void)networkRequestThreadEntryPoint:(id)__unused object
 {
@@ -114,9 +122,9 @@ enum FSURLOperationState {
 {
     [self willChangeValueForKey:@"isFinished"];
     self.state = finished;
-#ifdef FSURLDEBUG
-    for (FSURLDebugBlockCallback callback in [[self class] debugCallbacks]) callback(self.request, RequestFinished, self.response, self.payload, self.error);
-#endif
+    
+    for (FSURLRequestFinishedCallback blockCallback in [[self class] globalBlockCallbacks_requestFinished]) blockCallback(self.request, [NSThread currentThread], self.response, self.payload, self.error);
+    
     if (self.onFinish) self.onFinish(self.response, self.payload, self.error);
     if (self.delegate&&self.callback) {
         NSInvocation* inv = [NSInvocation invocationWithMethodSignature:[self.delegate methodSignatureForSelector:self.callback]];
@@ -145,6 +153,8 @@ enum FSURLOperationState {
         [self.connection scheduleInRunLoop:runLoop forMode:runLoopMode];
     }
     
+    for (FSURLRequestStartedCallback blockCallback in [[self class] globalBlockCallbacks_requestStarted]) blockCallback(self.request, [NSThread currentThread]);
+    
     [self.connection start];
 }
 
@@ -156,10 +166,6 @@ enum FSURLOperationState {
         return;
     
     self.state = executing;
-    
-#ifdef FSURLDEBUG
-    for (FSURLDebugBlockCallback callback in [[self class] debugCallbacks]) callback(self.request, RequestBegan, nil, nil, nil);
-#endif
     
     [self performSelector:@selector(operationDidStart) onThread:self.targetThread withObject:nil waitUntilDone:YES modes:[self.runLoopModes allObjects]];
 }
